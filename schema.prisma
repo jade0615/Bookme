@@ -1,0 +1,357 @@
+// BookMee Database Schema
+// 支持多行业预约+签到系统
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== 用户系统 ====================
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  phone       String   @unique
+  firstName   String
+  lastName    String
+  language    Language @default(EN)
+  timezone    String   @default("America/New_York")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 关联关系
+  bookings    Booking[]
+  checkIns    CheckIn[]
+
+  @@map("users")
+}
+
+// ==================== 商家系统 ====================
+
+model Business {
+  id            String       @id @default(cuid())
+  name          String
+  email         String       @unique
+  phone         String
+  industry      Industry
+  businessType  BusinessType @default(SINGLE)
+  address       String
+  city          String
+  state         String
+  zipCode       String
+  timezone      String
+  settings      Json // 业务设置JSON
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // 关联关系
+  employees     Employee[]
+  services      Service[]
+  bookings      Booking[]
+  locations     Location[]
+
+  @@map("businesses")
+}
+
+model Location {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  address    String
+  city       String
+  state      String
+  zipCode    String
+  phone      String?
+  createdAt  DateTime @default(now())
+
+  // 关联关系
+  business   Business @relation(fields: [businessId], references: [id])
+  employees  Employee[]
+  bookings   Booking[]
+
+  @@map("locations")
+}
+
+model Employee {
+  id         String   @id @default(cuid())
+  businessId String
+  locationId String?
+  firstName  String
+  lastName   String
+  email      String
+  phone      String
+  role       Role     @default(STAFF)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  // 关联关系
+  business   Business  @relation(fields: [businessId], references: [id])
+  location   Location? @relation(fields: [locationId], references: [id])
+  bookings   Booking[]
+  services   EmployeeService[]
+
+  @@map("employees")
+}
+
+// ==================== 服务系统 ====================
+
+model Service {
+  id          String   @id @default(cuid())
+  businessId  String
+  name        String
+  description String?
+  duration    Int      // 分钟
+  price       Decimal  @db.Money
+  deposit     Decimal  @db.Money // 20%预付款
+  category    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  // 关联关系
+  business    Business          @relation(fields: [businessId], references: [id])
+  employees   EmployeeService[]
+  bookings    Booking[]
+
+  @@map("services")
+}
+
+model EmployeeService {
+  id         String @id @default(cuid())
+  employeeId String
+  serviceId  String
+
+  // 关联关系
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  service    Service  @relation(fields: [serviceId], references: [id])
+
+  @@unique([employeeId, serviceId])
+  @@map("employee_services")
+}
+
+// ==================== 预约系统 ====================
+
+model Booking {
+  id              String        @id @default(cuid())
+  userId          String
+  businessId      String
+  locationId      String?
+  employeeId      String?
+  serviceId       String
+  bookingDate     DateTime
+  startTime       DateTime
+  endTime         DateTime
+  status          BookingStatus @default(PENDING)
+  totalAmount     Decimal       @db.Money
+  depositAmount   Decimal       @db.Money
+  remainingAmount Decimal       @db.Money
+  tipAmount       Decimal?      @db.Money
+  notes           String?
+  qrCode          String?       @unique // 一次性QR码
+  qrExpiry        DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // 关联关系
+  user            User          @relation(fields: [userId], references: [id])
+  business        Business      @relation(fields: [businessId], references: [id])
+  location        Location?     @relation(fields: [locationId], references: [id])
+  employee        Employee?     @relation(fields: [employeeId], references: [id])
+  service         Service       @relation(fields: [serviceId], references: [id])
+  payments        Payment[]
+  checkIn         CheckIn?
+  cancellation    Cancellation?
+
+  @@map("bookings")
+}
+
+// ==================== 签到系统 ====================
+
+model CheckIn {
+  id           String     @id @default(cuid())
+  bookingId    String     @unique
+  userId       String
+  checkInTime  DateTime   @default(now())
+  method       CheckInMethod
+  verifiedBy   String?    // 员工ID
+  smsCode      String?    // SMS验证码
+  smsExpiry    DateTime?
+  status       CheckInStatus @default(CHECKED_IN)
+
+  // 关联关系
+  booking      Booking    @relation(fields: [bookingId], references: [id])
+  user         User       @relation(fields: [userId], references: [id])
+
+  @@map("check_ins")
+}
+
+// ==================== 支付系统 ====================
+
+model Payment {
+  id              String        @id @default(cuid())
+  bookingId       String
+  stripePaymentId String?       @unique
+  amount          Decimal       @db.Money
+  type            PaymentType
+  status          PaymentStatus @default(PENDING)
+  method          String?       // card, apple_pay, etc
+  processingFee   Decimal?      @db.Money
+  stateTax        Decimal?      @db.Money
+  createdAt       DateTime      @default(now())
+  processedAt     DateTime?
+
+  // 关联关系
+  booking         Booking       @relation(fields: [bookingId], references: [id])
+  refund          Refund?
+
+  @@map("payments")
+}
+
+model Refund {
+  id              String       @id @default(cuid())
+  paymentId       String       @unique
+  amount          Decimal      @db.Money
+  reason          RefundReason
+  status          RefundStatus @default(PENDING)
+  stripeRefundId  String?
+  processedAt     DateTime?
+  createdAt       DateTime     @default(now())
+
+  // 关联关系
+  payment         Payment      @relation(fields: [paymentId], references: [id])
+
+  @@map("refunds")
+}
+
+// ==================== 取消系统 ====================
+
+model Cancellation {
+  id              String             @id @default(cuid())
+  bookingId       String             @unique
+  reason          CancellationReason
+  refundAmount    Decimal?           @db.Money
+  cancellationFee Decimal?           @db.Money
+  cancelledBy     String             // user_id or employee_id
+  cancelledAt     DateTime           @default(now())
+
+  // 关联关系
+  booking         Booking            @relation(fields: [bookingId], references: [id])
+
+  @@map("cancellations")
+}
+
+// ==================== 广告追踪 ====================
+
+model TrackingEvent {
+  id         String      @id @default(cuid())
+  bookingId  String?
+  userId     String?
+  event      EventType
+  properties Json?       // 事件属性
+  utmSource  String?
+  utmMedium  String?
+  utmCampaign String?
+  createdAt  DateTime    @default(now())
+
+  @@map("tracking_events")
+}
+
+// ==================== 枚举类型 ====================
+
+enum Language {
+  EN    // English
+  ZH    // 中文
+  ES    // Spanish
+}
+
+enum Industry {
+  BEAUTY        // 美容美甲
+  RESTAURANT    // 餐饮
+  MEDICAL       // 医疗牙科
+  LEGAL         // 法律咨询
+  FITNESS       // 健身
+  AUTOMOTIVE    // 汽车服务
+  OTHER         // 其他
+}
+
+enum BusinessType {
+  SINGLE        // 单店
+  CHAIN         // 连锁
+}
+
+enum Role {
+  OWNER         // 老板
+  MANAGER       // 经理
+  STAFF         // 员工
+}
+
+enum BookingStatus {
+  PENDING       // 待确认
+  CONFIRMED     // 已确认
+  CHECKED_IN    // 已签到
+  IN_PROGRESS   // 服务中
+  COMPLETED     // 已完成
+  CANCELLED     // 已取消
+  NO_SHOW       // 未到店
+}
+
+enum CheckInMethod {
+  QR_CODE       // 二维码
+  PHONE_SMS     // 手机短信
+  STAFF_MANUAL  // 员工手动
+}
+
+enum CheckInStatus {
+  CHECKED_IN    // 已签到
+  COMPLETED     // 已完成服务
+}
+
+enum PaymentType {
+  DEPOSIT       // 定金
+  FINAL         // 尾款
+  TIP           // 小费
+  REFUND        // 退款
+}
+
+enum PaymentStatus {
+  PENDING       // 待处理
+  PROCESSING    // 处理中
+  SUCCEEDED     // 成功
+  FAILED        // 失败
+  CANCELLED     // 已取消
+}
+
+enum RefundReason {
+  CUSTOMER_REQUEST    // 客户要求
+  BUSINESS_CANCEL     // 商家取消
+  NO_SHOW            // 客户未到
+  TECHNICAL_ISSUE    // 技术问题
+  OTHER              // 其他
+}
+
+enum RefundStatus {
+  PENDING       // 待处理
+  APPROVED      // 已批准
+  PROCESSED     // 已处理
+  REJECTED      // 已拒绝
+}
+
+enum CancellationReason {
+  CUSTOMER_PERSONAL   // 个人原因
+  EMERGENCY          // 紧急情况
+  BUSINESS_ISSUE     // 商家问题
+  WEATHER            // 天气原因
+  OTHER              // 其他
+}
+
+enum EventType {
+  BOOKING_CREATED     // 预约创建
+  BOOKING_PAID        // 预付款完成
+  BOOKING_CHECKED_IN  // 客户签到
+  BOOKING_COMPLETED   // 服务完成
+  PAYMENT_FINAL       // 尾款完成
+  BOOKING_CANCELLED   // 预约取消
+}
